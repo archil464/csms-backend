@@ -136,12 +136,7 @@ auth_ns = api.namespace('auth', description='Authentication operations')
 @auth_ns.route('/login')
 class UserLogin(Resource):
     @auth_ns.expect(login_model)
-    @auth_ns.response(200, 'Login successful')
-    @auth_ns.response(401, 'Invalid credentials')
-    @auth_ns.response(500, 'Server Error')
     def post(self):
-        """Authenticate admin user"""
-        conn = None
         try:
             data = request.get_json()
             username = data.get('username', '').strip()
@@ -165,7 +160,12 @@ class UserLogin(Resource):
             input_hash = hashlib.sha256((password + salt).encode()).hexdigest()
             
             if secrets.compare_digest(input_hash, stored_hash):
-                return {'message': 'Login successful'}, 200
+                # Generate and return a token
+                token = secrets.token_hex(32)
+                return {
+                    'message': 'Login successful',
+                    'token': token  # <-- This is what the frontend expects
+                }, 200
             else:
                 return {'error': 'Invalid credentials'}, 401
                 
@@ -175,7 +175,6 @@ class UserLogin(Resource):
         finally:
             if conn:
                 conn.close()
-
 # Validation functions
 def validate_email(email):
     pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
