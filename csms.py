@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Database path - creates a 'data' folder in your project
-DB_PATH = Path('/data/users.db')
+DB_PATH = Path('users.db')
 print(f"Database will be created at: {DB_PATH.absolute()}")
 
 # Initialize Flask app
