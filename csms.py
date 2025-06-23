@@ -288,7 +288,66 @@ class DeleteAllUsers(Resource):
         finally:
             if conn:
                 conn.close()
+@users_ns.route('/delete/<int:user_id>')
+class DeleteUser(Resource):
+    @users_ns.response(200, 'User deleted successfully')
+    @users_ns.response(404, 'User not found')
+    @users_ns.response(500, 'Server Error')
+    def delete(self, user_id):
+        """Delete a specific user"""
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            # Check if user exists
+            cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+            if not cursor.fetchone():
+                return {'error': 'User not found'}, 404
+            
+            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            conn.commit()
+            
+            logger.info(f"🗑️ Deleted user with ID: {user_id}")
+            return {'message': 'User deleted successfully'}, 200
 
+        except Exception as e:
+            logger.error(f"Error deleting user: {e}")
+            return {'error': str(e)}, 500
+        finally:
+            if conn:
+                conn.close()
+
+# Add to numbers_ns namespace
+@numbers_ns.route('/delete/<int:number_id>')
+class DeleteNumber(Resource):
+    @numbers_ns.response(200, 'Number deleted successfully')
+    @numbers_ns.response(404, 'Number not found')
+    @numbers_ns.response(500, 'Server Error')
+    def delete(self, number_id):
+        """Delete a specific phone number"""
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            # Check if number exists
+            cursor.execute("SELECT id FROM users_numbers WHERE id = ?", (number_id,))
+            if not cursor.fetchone():
+                return {'error': 'Number not found'}, 404
+            
+            cursor.execute("DELETE FROM users_numbers WHERE id = ?", (number_id,))
+            conn.commit()
+            
+            logger.info(f"🗑️ Deleted number with ID: {number_id}")
+            return {'message': 'Number deleted successfully'}, 200
+
+        except Exception as e:
+            logger.error(f"Error deleting number: {e}")
+            return {'error': str(e)}, 500
+        finally:
+            if conn:
+                conn.close()
 # Health Check Endpoint
 @api.route('/health')
 class HealthCheck(Resource):
