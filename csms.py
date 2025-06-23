@@ -348,6 +348,30 @@ class DeleteNumber(Resource):
         finally:
             if conn:
                 conn.close()
+                # Delete All Phone Numbers (for testing)
+@numbers_ns.route('/delete_all') # This is the missing endpoint
+class DeleteAllNumbers(Resource):
+    @numbers_ns.response(200, 'All phone numbers deleted')
+    @numbers_ns.response(500, 'Server Error')
+    def delete(self):
+        """Delete all phone numbers (for testing purposes)"""
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM users_numbers") # This is the key SQL command
+            deleted_count = cursor.rowcount
+            conn.commit()
+            
+            logger.info(f"🗑️ Deleted {deleted_count} phone numbers")
+            return {'message': f'Deleted {deleted_count} phone numbers successfully!'}, 200
+
+        except Exception as e:
+            logger.error(f"Error deleting phone numbers: {e}")
+            return {'error': str(e)}, 500
+        finally:
+            if conn:
+                conn.close()
 # Health Check Endpoint
 @api.route('/health')
 class HealthCheck(Resource):
