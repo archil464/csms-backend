@@ -100,7 +100,7 @@ def init_auth_db():
         if cursor.fetchone()[0] == 0:
             # Create a secure default admin
             username = "csms_admin"
-            password = "SecurePass123!" + secrets.token_hex(8)  # Complex default password
+            password = "SecurePass123!"
             salt = secrets.token_hex(16)
             password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
             
