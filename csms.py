@@ -6,6 +6,9 @@ import re
 import os
 from pathlib import Path
 import logging
+import hashlib
+import secrets
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -76,6 +79,102 @@ def init_db():
 
 # Initialize database when app starts
 init_db()
+def init_auth_db():
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        
+        # Create admin users table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS admin_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                salt TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Add a default admin user if none exists
+        cursor.execute("SELECT COUNT(*) FROM admin_users")
+        if cursor.fetchone()[0] == 0:
+            # Create a secure default admin
+            username = "csms_admin"
+            password = "SecurePass123!" + secrets.token_hex(8)  # Complex default password
+            salt = secrets.token_hex(16)
+            password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+            
+            cursor.execute(
+                "INSERT INTO admin_users (username, password_hash, salt) VALUES (?, ?, ?)",
+                (username, password_hash, salt)
+            )
+            conn.commit()
+            logger.info(f"🔐 Created default admin user: {username}")
+        
+        conn.commit()
+        logger.info("✅ Auth database initialized successfully!")
+        
+    except Exception as e:
+        logger.error(f"❌ Error initializing auth database: {e}")
+        raise
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+# Initialize auth database when app starts
+init_auth_db()
+
+# Add login model
+login_model = api.model('Login', {
+    'username': fields.String(required=True, description='Username'),
+    'password': fields.String(required=True, description='Password')
+})
+
+# Add auth namespace
+auth_ns = api.namespace('auth', description='Authentication operations')
+
+@auth_ns.route('/login')
+class UserLogin(Resource):
+    @auth_ns.expect(login_model)
+    @auth_ns.response(200, 'Login successful')
+    @auth_ns.response(401, 'Invalid credentials')
+    @auth_ns.response(500, 'Server Error')
+    def post(self):
+        """Authenticate admin user"""
+        conn = None
+        try:
+            data = request.get_json()
+            username = data.get('username', '').strip()
+            password = data.get('password', '').strip()
+            
+            if not username or not password:
+                return {'error': 'Username and password are required'}, 401
+            
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT password_hash, salt FROM admin_users WHERE username = ?",
+                (username,)
+            )
+            result = cursor.fetchone()
+            
+            if not result:
+                return {'error': 'Invalid credentials'}, 401
+                
+            stored_hash, salt = result
+            input_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+            
+            if secrets.compare_digest(input_hash, stored_hash):
+                return {'message': 'Login successful'}, 200
+            else:
+                return {'error': 'Invalid credentials'}, 401
+                
+        except Exception as e:
+            logger.error(f"Login error: {e}")
+            return {'error': 'An unexpected error occurred'}, 500
+        finally:
+            if conn:
+                conn.close()
 
 # Validation functions
 def validate_email(email):
