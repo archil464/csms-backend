@@ -494,7 +494,15 @@ class DeleteAllNumbers(Resource):
             if conn:
                 conn.close()
 
-
+@api.route('/debug_db')
+class DebugDB(Resource):
+    def get(self):
+        db_exists = os.path.exists(DB_PATH)
+        return {
+            'db_path': str(DB_PATH),
+            'exists': db_exists,
+            'size': os.path.getsize(DB_PATH) if db_exists else 0
+        }, 200
 # Root endpoint - using Flask route instead of api.route
 @api.route('/welcome')
 class Welcome(Resource):
