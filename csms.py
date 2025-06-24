@@ -9,13 +9,21 @@ import logging
 import hashlib
 import secrets
 
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Database path - creates a 'data' folder in your project
-DB_PATH = Path('users.db')
+# Database path - Use Railway's persistent volume or local path
+# Railway provides persistent storage at /app/data
+if os.path.exists('/app'):
+    # Railway environment
+    DB_PATH = Path('/app/data/users.db')
+    os.makedirs('/app/data', exist_ok=True)
+else:
+    # Local development
+    DB_PATH = Path('data/users.db')
+    os.makedirs('data', exist_ok=True)
+
 print(f"Database will be created at: {DB_PATH.absolute()}")
 
 # Initialize Flask app
@@ -26,19 +34,20 @@ CORS(app)  # Enable CORS for all routes
 api = Api(
     app,
     version='1.0',
-    title='User Registration API',
+    title='Car Service Management System API',
     description='A simple API for user registration and phone number storage',
-    doc='/swagger/'
+    doc='/docs/'  # Changed from /swagger/ to /docs/
 )
 
 # Define namespaces
 users_ns = api.namespace('users', description='User operations')
 numbers_ns = api.namespace('numbers', description='Phone number operations')
+auth_ns = api.namespace('auth', description='Authentication operations')
 
 # Database initialization
 def init_db():
     try:
-        # Create data directory if it doesn't exist
+        # Ensure parent directory exists
         DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         
         conn = sqlite3.connect(DB_PATH)
@@ -66,24 +75,6 @@ def init_db():
             )
         ''')
         
-        conn.commit()
-        logger.info("✅ Database initialized successfully!")
-        logger.info(f"📍 Database located at: {DB_PATH.absolute()}")
-        
-    except Exception as e:
-        logger.error(f"❌ Error initializing database: {e}")
-        raise
-    finally:
-        if 'conn' in locals():
-            conn.close()
-
-# Initialize database when app starts
-init_db()
-def init_auth_db():
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
         # Create admin users table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS admin_users (
@@ -99,7 +90,7 @@ def init_auth_db():
         cursor.execute("SELECT COUNT(*) FROM admin_users")
         if cursor.fetchone()[0] == 0:
             # Create a secure default admin
-            username = "csms_admin"
+            username = "admin"
             password = "SecurePass123!"
             salt = secrets.token_hex(16)
             password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
@@ -108,31 +99,49 @@ def init_auth_db():
                 "INSERT INTO admin_users (username, password_hash, salt) VALUES (?, ?, ?)",
                 (username, password_hash, salt)
             )
-            conn.commit()
             logger.info(f"🔐 Created default admin user: {username}")
         
         conn.commit()
-        logger.info("✅ Auth database initialized successfully!")
+        logger.info("✅ Database initialized successfully!")
+        logger.info(f"📍 Database located at: {DB_PATH.absolute()}")
         
     except Exception as e:
-        logger.error(f"❌ Error initializing auth database: {e}")
+        logger.error(f"❌ Error initializing database: {e}")
         raise
     finally:
         if 'conn' in locals():
             conn.close()
 
-# Initialize auth database when app starts
-init_auth_db()
+# Initialize database when app starts
+init_db()
 
-# Add login model
+# Validation functions
+def validate_email(email):
+    pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+    return re.match(pattern, email) is not None
+
+def validate_phone(phone):
+    cleaned_phone = re.sub(r'[\s\-\(\)\+]', '', phone)
+    return cleaned_phone.isdigit() and len(cleaned_phone) >= 7
+
+# API Models for Swagger documentation
+user_model = api.model('User', {
+    'name': fields.String(required=True, description='Full name'),
+    'company': fields.String(description='Company name'),
+    'email': fields.String(description='Email address'),
+    'phone': fields.String(description='Phone number')
+})
+
+number_model = api.model('PhoneNumber', {
+    'details_number': fields.String(required=True, description='Phone number')
+})
+
 login_model = api.model('Login', {
     'username': fields.String(required=True, description='Username'),
     'password': fields.String(required=True, description='Password')
 })
 
-# Add auth namespace
-auth_ns = api.namespace('auth', description='Authentication operations')
-
+# Authentication endpoint
 @auth_ns.route('/login')
 class UserLogin(Resource):
     @auth_ns.expect(login_model)
@@ -160,11 +169,10 @@ class UserLogin(Resource):
             input_hash = hashlib.sha256((password + salt).encode()).hexdigest()
             
             if secrets.compare_digest(input_hash, stored_hash):
-                # Generate and return a token
                 token = secrets.token_hex(32)
                 return {
                     'message': 'Login successful',
-                    'token': token  # <-- This is what the frontend expects
+                    'token': token
                 }, 200
             else:
                 return {'error': 'Invalid credentials'}, 401
@@ -175,34 +183,11 @@ class UserLogin(Resource):
         finally:
             if conn:
                 conn.close()
-# Validation functions
-def validate_email(email):
-    pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
-    return re.match(pattern, email) is not None
-
-def validate_phone(phone):
-    cleaned_phone = re.sub(r'[\s\-\(\)\+]', '', phone)
-    return cleaned_phone.isdigit() and len(cleaned_phone) >= 7
-
-# API Models for Swagger documentation
-user_model = api.model('User', {
-    'name': fields.String(required=True, description='Full name'),
-    'company': fields.String(description='Company name'),
-    'email': fields.String(description='Email address'),
-    'phone': fields.String(description='Phone number')
-})
-
-number_model = api.model('PhoneNumber', {
-    'details_number': fields.String(required=True, description='Phone number')
-})
 
 # User Registration Endpoint
 @users_ns.route('/register')
 class UserRegistration(Resource):
     @users_ns.expect(user_model)
-    @users_ns.response(201, 'User registered successfully')
-    @users_ns.response(400, 'Validation Error')
-    @users_ns.response(500, 'Server Error')
     def post(self):
         """Register a new user"""
         conn = None
@@ -248,9 +233,6 @@ class UserRegistration(Resource):
                 'user_id': user_id
             }, 201
 
-        except sqlite3.IntegrityError as e:
-            logger.error(f"Database integrity error: {e}")
-            return {'error': 'Database error occurred'}, 500
         except Exception as e:
             logger.error(f"Unexpected error: {e}")
             return {'error': 'An unexpected error occurred'}, 500
@@ -262,9 +244,6 @@ class UserRegistration(Resource):
 @numbers_ns.route('/detail_number')
 class PhoneNumber(Resource):
     @numbers_ns.expect(number_model)
-    @numbers_ns.response(201, 'Phone number saved successfully')
-    @numbers_ns.response(400, 'Validation Error')
-    @numbers_ns.response(500, 'Server Error')
     def post(self):
         """Store a phone number"""
         conn = None
@@ -309,8 +288,6 @@ class PhoneNumber(Resource):
 # Get All Users Endpoint
 @users_ns.route('/all')
 class GetAllUsers(Resource):
-    @users_ns.response(200, 'Success')
-    @users_ns.response(500, 'Server Error')
     def get(self):
         """Get all registered users"""
         conn = None
@@ -337,8 +314,6 @@ class GetAllUsers(Resource):
 # Get All Phone Numbers Endpoint
 @numbers_ns.route('/all')
 class GetAllNumbers(Resource):
-    @numbers_ns.response(200, 'Success')
-    @numbers_ns.response(500, 'Server Error')
     def get(self):
         """Get all phone numbers"""
         conn = None
@@ -362,35 +337,9 @@ class GetAllNumbers(Resource):
             if conn:
                 conn.close()
 
-# Delete All Users (for testing)
-@users_ns.route('/delete_all')
-class DeleteAllUsers(Resource):
-    @users_ns.response(200, 'All users deleted')
-    @users_ns.response(500, 'Server Error')
-    def delete(self):
-        """Delete all users (for testing purposes)"""
-        conn = None
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM users")
-            deleted_count = cursor.rowcount
-            conn.commit()
-            
-            logger.info(f"🗑️ Deleted {deleted_count} users")
-            return {'message': f'Deleted {deleted_count} users successfully!'}, 200
-
-        except Exception as e:
-            logger.error(f"Error deleting users: {e}")
-            return {'error': str(e)}, 500
-        finally:
-            if conn:
-                conn.close()
+# Delete specific user
 @users_ns.route('/delete/<int:user_id>')
 class DeleteUser(Resource):
-    @users_ns.response(200, 'User deleted successfully')
-    @users_ns.response(404, 'User not found')
-    @users_ns.response(500, 'Server Error')
     def delete(self, user_id):
         """Delete a specific user"""
         conn = None
@@ -416,12 +365,9 @@ class DeleteUser(Resource):
             if conn:
                 conn.close()
 
-# Add to numbers_ns namespace
+# Delete specific number
 @numbers_ns.route('/delete/<int:number_id>')
 class DeleteNumber(Resource):
-    @numbers_ns.response(200, 'Number deleted successfully')
-    @numbers_ns.response(404, 'Number not found')
-    @numbers_ns.response(500, 'Server Error')
     def delete(self, number_id):
         """Delete a specific phone number"""
         conn = None
@@ -446,30 +392,7 @@ class DeleteNumber(Resource):
         finally:
             if conn:
                 conn.close()
-                # Delete All Phone Numbers (for testing)
-@numbers_ns.route('/delete_all') # This is the missing endpoint
-class DeleteAllNumbers(Resource):
-    @numbers_ns.response(200, 'All phone numbers deleted')
-    @numbers_ns.response(500, 'Server Error')
-    def delete(self):
-        """Delete all phone numbers (for testing purposes)"""
-        conn = None
-        try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM users_numbers") # This is the key SQL command
-            deleted_count = cursor.rowcount
-            conn.commit()
-            
-            logger.info(f"🗑️ Deleted {deleted_count} phone numbers")
-            return {'message': f'Deleted {deleted_count} phone numbers successfully!'}, 200
 
-        except Exception as e:
-            logger.error(f"Error deleting phone numbers: {e}")
-            return {'error': str(e)}, 500
-        finally:
-            if conn:
-                conn.close()
 # Health Check Endpoint
 @api.route('/health')
 class HealthCheck(Resource):
@@ -491,16 +414,16 @@ class HealthCheck(Resource):
                 'database': {
                     'path': str(DB_PATH.absolute()),
                     'exists': DB_PATH.exists(),
-                    'size_bytes': DB_PATH.stat().st_size if DB_PATH.exists() else 0,
                     'users_count': user_count,
                     'numbers_count': number_count
                 },
                 'endpoints': {
-                    'swagger_docs': '/swagger/',
+                    'api_docs': '/docs/',
                     'register_user': '/users/register',
                     'save_number': '/numbers/detail_number',
                     'get_users': '/users/all',
-                    'get_numbers': '/numbers/all'
+                    'get_numbers': '/numbers/all',
+                    'login': '/auth/login'
                 }
             }, 200
 
@@ -512,13 +435,17 @@ class HealthCheck(Resource):
                 'error': str(e)
             }, 500
 
+# Root endpoint
+@api.route('/')
+class Root(Resource):
+    def get(self):
+        """Welcome message"""
+        return {
+            'message': 'Welcome to Car Service Management System API',
+            'documentation': '/docs/',
+            'health': '/health'
+        }
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    debug_mode = os.environ.get('FLASK_ENV') == 'development'
-    
-    print("🚀 Starting Flask Application...")
-    print(f"📡 Server will run on: http://localhost:{port}")
-    print(f"📚 API Documentation: http://localhost:{port}/swagger/")
-    print(f"❤️  Health Check: http://localhost:{port}/health")
-    
-    app.run(debug=debug_mode, host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port)
