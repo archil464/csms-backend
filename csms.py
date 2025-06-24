@@ -434,6 +434,54 @@ class HealthCheck(Resource):
                 'message': 'Database connection failed',
                 'error': str(e)
             }, 500
+# Delete all users endpoint
+@users_ns.route('/delete_all')
+class DeleteAllUsers(Resource):
+    def delete(self):
+        """Delete all users"""
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM users")
+            deleted_count = cursor.rowcount
+            conn.commit()
+            
+            logger.info(f"🗑️ Deleted all {deleted_count} users")
+            return {'message': f'Deleted all {deleted_count} users successfully'}, 200
+
+        except Exception as e:
+            logger.error(f"Error deleting all users: {e}")
+            return {'error': str(e)}, 500
+        finally:
+            if conn:
+                conn.close()
+
+# Delete all phone numbers endpoint
+@numbers_ns.route('/delete_all')
+class DeleteAllNumbers(Resource):
+    def delete(self):
+        """Delete all phone numbers"""
+        conn = None
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            cursor = conn.cursor()
+            
+            cursor.execute("DELETE FROM users_numbers")
+            deleted_count = cursor.rowcount
+            conn.commit()
+            
+            logger.info(f"🗑️ Deleted all {deleted_count} phone numbers")
+            return {'message': f'Deleted all {deleted_count} phone numbers successfully'}, 200
+
+        except Exception as e:
+            logger.error(f"Error deleting all phone numbers: {e}")
+            return {'error': str(e)}, 500
+        finally:
+            if conn:
+                conn.close()
+
 
 # Root endpoint - using Flask route instead of api.route
 @api.route('/welcome')
