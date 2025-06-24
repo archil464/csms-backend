@@ -39,7 +39,3 @@ Thumbs.db
 
 # Environment variables
 .env
-
-# Local database (don't commit to git)
-data/
-*.db
