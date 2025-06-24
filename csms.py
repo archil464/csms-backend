@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, current_app
 from flask_restx import Api, Resource, fields
 from flask_cors import CORS
 import re
@@ -9,9 +9,14 @@ import hashlib
 import secrets
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.exc import SQLAlchemyError
+from datetime import datetime, timedelta
+import jwt
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 # Initialize Flask app
@@ -19,9 +24,13 @@ app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
 
 # Database configuration for PostgreSQL
-# Railway automatically sets the DATABASE_URL environment variable
 app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL')
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False  # Suppress deprecation warning
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# JWT Configuration
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', secrets.token_hex(32))
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=1)
+app.config['JWT_REFRESH_TOKEN_EXPIRES'] = timedelta(days=7)
 
 db = SQLAlchemy(app)
 
@@ -40,8 +49,6 @@ numbers_ns = api.namespace('numbers', description='Phone number operations')
 auth_ns = api.namespace('auth', description='Authentication operations')
 
 # --- SQLAlchemy Models ---
-# Define Python classes that represent your database tables.
-
 class User(db.Model):
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
@@ -49,10 +56,7 @@ class User(db.Model):
     company = db.Column(db.Text)
     email = db.Column(db.Text)
     phone = db.Column(db.Text)
-    created_at = db.Column(db.TIMESTAMP(timezone=True), server_default=db.func.now()) # Use func.now() for PostgreSQL
-    
-    # You might want to add a unique constraint on email/phone if they are intended to be unique
-    # __table_args__ = (db.UniqueConstraint('email', name='_email_uc'), db.UniqueConstraint('phone', name='_phone_uc'))
+    created_at = db.Column(db.TIMESTAMP(timezone=True), server_default=db.func.now())
 
 class UsersNumber(db.Model):
     __tablename__ = 'users_numbers'
@@ -69,18 +73,15 @@ class AdminUser(db.Model):
     created_at = db.Column(db.TIMESTAMP(timezone=True), server_default=db.func.now())
 
 # --- Database Initialization ---
-# This function will create tables if they don't exist and add a default admin user.
-# It should be called once when the application starts.
 def initialize_database():
     try:
         with app.app_context():
-            db.create_all()  # Creates tables based on defined models
+            db.create_all()
             logger.info("✅ PostgreSQL tables ensured to exist.")
 
-            # Add a default admin user if none exists
             if not AdminUser.query.filter_by(username="admin").first():
                 username = "admin"
-                password = "SecurePass123!" # Use a strong, unique password
+                password = "SecurePass123!"
                 salt = secrets.token_hex(16)
                 password_hash = hashlib.sha256((password + salt).encode()).hexdigest()
 
@@ -94,30 +95,22 @@ def initialize_database():
             logger.info("✅ Database initialized successfully!")
             logger.info(f"📍 Database connected to: {app.config['SQLALCHEMY_DATABASE_URI']}")
 
-    except SQLAlchemyError as e:
-        logger.error(f"❌ Error initializing PostgreSQL database: {e}", exc_info=True)
-        # It's critical to re-raise or handle this error, as the app won't function without a DB
-        raise
     except Exception as e:
-        logger.error(f"❌ An unexpected error occurred during database initialization: {e}", exc_info=True)
+        logger.error(f"❌ Error initializing database: {e}", exc_info=True)
         raise
 
-# Call the database initialization function when the app starts
-# Ensure this runs once globally, typically outside of if __name__ == '__main__':
-# or specifically handled for Gunicorn workers.
 initialize_database()
 
-# --- Validation functions (remain unchanged) ---
+# --- Validation functions ---
 def validate_email(email):
     pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
     return re.match(pattern, email) is not None
 
 def validate_phone(phone):
     cleaned_phone = re.sub(r'[\s\-\(\)\+]', '', phone)
-    # Basic check for at least 7 digits, adjust as per country-specific requirements
     return cleaned_phone.isdigit() and len(cleaned_phone) >= 7
 
-# --- API Models for Swagger documentation (remain unchanged) ---
+# --- API Models for Swagger documentation ---
 user_model = api.model('User', {
     'name': fields.String(required=True, description='Full name'),
     'company': fields.String(description='Company name'),
@@ -139,50 +132,102 @@ login_model = api.model('Login', {
 class UserLogin(Resource):
     @auth_ns.expect(login_model)
     def post(self):
+        """Authenticate admin user and return JWT tokens"""
         try:
             data = request.get_json()
             username = data.get('username', '').strip()
             password = data.get('password', '').strip()
             
-            logger.info(f"Login attempt for username: {username}")
-            
             if not username or not password:
                 return {'error': 'Username and password are required'}, 401
             
-            # Query the admin_users table using SQLAlchemy
             admin_user = AdminUser.query.filter_by(username=username).first()
             
             if not admin_user:
-                logger.warning(f"No admin user found with username: {username}")
+                logger.warning(f"Login attempt for non-existent user: {username}")
                 return {'error': 'Invalid credentials'}, 401
                 
             stored_hash = admin_user.password_hash
             salt = admin_user.salt
-            logger.info(f"Stored hash: {stored_hash}")
-            logger.info(f"Salt: {salt}")
-            
-            # Compute hash for the provided password
             input_hash = hashlib.sha256((password + salt).encode()).hexdigest()
-            logger.info(f"Computed hash: {input_hash}")
             
-            # Secure comparison to prevent timing attacks
             if secrets.compare_digest(input_hash, stored_hash):
-                token = secrets.token_hex(32) # Generate a simple token (for demo purposes)
-                logger.info("Login successful")
+                # Generate JWT tokens
+                access_token = jwt.encode({
+                    'sub': admin_user.id,
+                    'username': admin_user.username,
+                    'exp': datetime.utcnow() + current_app.config['JWT_ACCESS_TOKEN_EXPIRES'],
+                    'iat': datetime.utcnow(),
+                    'type': 'access'
+                }, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
+                
+                refresh_token = jwt.encode({
+                    'sub': admin_user.id,
+                    'exp': datetime.utcnow() + current_app.config['JWT_REFRESH_TOKEN_EXPIRES'],
+                    'iat': datetime.utcnow(),
+                    'type': 'refresh'
+                }, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
+                
+                logger.info(f"Login successful for user: {username}")
                 return {
                     'message': 'Login successful',
-                    'token': token
+                    'access_token': access_token,
+                    'refresh_token': refresh_token,
+                    'expires_in': current_app.config['JWT_ACCESS_TOKEN_EXPIRES'].total_seconds()
                 }, 200
             else:
-                logger.warning("Password hash mismatch")
+                logger.warning(f"Invalid password attempt for user: {username}")
                 return {'error': 'Invalid credentials'}, 401
                 
-        except SQLAlchemyError as e:
-            logger.error(f"Database error during login: {e}", exc_info=True)
-            return {'error': 'A database error occurred during login'}, 500
         except Exception as e:
-            logger.error(f"Login error: {e}", exc_info=True)
+            logger.error(f"Login error: {str(e)}", exc_info=True)
             return {'error': 'An unexpected error occurred during login'}, 500
+
+# --- Add token refresh endpoint ---
+@auth_ns.route('/refresh')
+class TokenRefresh(Resource):
+    def post(self):
+        """Refresh access token using refresh token"""
+        try:
+            refresh_token = request.json.get('refresh_token')
+            if not refresh_token:
+                return {'error': 'Refresh token is required'}, 400
+            
+            try:
+                payload = jwt.decode(
+                    refresh_token,
+                    current_app.config['JWT_SECRET_KEY'],
+                    algorithms=['HS256']
+                )
+                
+                if payload.get('type') != 'refresh':
+                    return {'error': 'Invalid token type'}, 401
+                
+                admin_user = AdminUser.query.get(payload['sub'])
+                if not admin_user:
+                    return {'error': 'User not found'}, 404
+                
+                new_access_token = jwt.encode({
+                    'sub': admin_user.id,
+                    'username': admin_user.username,
+                    'exp': datetime.utcnow() + current_app.config['JWT_ACCESS_TOKEN_EXPIRES'],
+                    'iat': datetime.utcnow(),
+                    'type': 'access'
+                }, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
+                
+                return {
+                    'access_token': new_access_token,
+                    'expires_in': current_app.config['JWT_ACCESS_TOKEN_EXPIRES'].total_seconds()
+                }, 200
+                
+            except jwt.ExpiredSignatureError:
+                return {'error': 'Refresh token has expired'}, 401
+            except jwt.InvalidTokenError:
+                return {'error': 'Invalid refresh token'}, 401
+                
+        except Exception as e:
+            logger.error(f"Token refresh error: {str(e)}", exc_info=True)
+            return {'error': 'An unexpected error occurred during token refresh'}, 500
 
 # --- User Registration Endpoint ---
 @users_ns.route('/register')
@@ -490,9 +535,7 @@ class Welcome(Resource):
 # --- Main entry point for running the Flask app ---
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
-    # When running locally, ensure DATABASE_URL is set in your environment
-    # e.g., export DATABASE_URL="postgresql://user:password@host:port/database_name"
     if not app.config['SQLALCHEMY_DATABASE_URI']:
-        logger.warning("SQLALCHEMY_DATABASE_URI not set! Running with default settings. Ensure DATABASE_URL env var is configured for deployment.")
+        logger.warning("SQLALCHEMY_DATABASE_URI not set! Running with default settings.")
     
     app.run(host='0.0.0.0', port=port)
