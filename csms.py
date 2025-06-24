@@ -151,6 +151,8 @@ class UserLogin(Resource):
             username = data.get('username', '').strip()
             password = data.get('password', '').strip()
             
+            logger.info(f"Login attempt for username: {username}")
+            
             if not username or not password:
                 return {'error': 'Username and password are required'}, 401
             
@@ -163,22 +165,32 @@ class UserLogin(Resource):
             result = cursor.fetchone()
             
             if not result:
+                logger.warning(f"No user found with username: {username}")
                 return {'error': 'Invalid credentials'}, 401
                 
             stored_hash, salt = result
+            logger.info(f"Stored hash: {stored_hash}")
+            logger.info(f"Salt: {salt}")
+            
+            # Log what we're about to hash
+            logger.info(f"Hashing input: password='{password}' + salt='{salt}'")
+            
             input_hash = hashlib.sha256((password + salt).encode()).hexdigest()
+            logger.info(f"Computed hash: {input_hash}")
             
             if secrets.compare_digest(input_hash, stored_hash):
                 token = secrets.token_hex(32)
+                logger.info("Login successful")
                 return {
                     'message': 'Login successful',
                     'token': token
                 }, 200
             else:
+                logger.warning("Password hash mismatch")
                 return {'error': 'Invalid credentials'}, 401
                 
         except Exception as e:
-            logger.error(f"Login error: {e}")
+            logger.error(f"Login error: {e}", exc_info=True)
             return {'error': 'An unexpected error occurred'}, 500
         finally:
             if conn:
