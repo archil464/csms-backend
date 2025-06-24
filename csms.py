@@ -435,16 +435,16 @@ class HealthCheck(Resource):
                 'error': str(e)
             }, 500
 
-# Root endpoint
-@api.route('/')
-class Root(Resource):
-    def get(self):
-        """Welcome message"""
-        return {
-            'message': 'Welcome to Car Service Management System API',
-            'documentation': '/docs/',
-            'health': '/health'
-        }
+# Root endpoint - using Flask route instead of api.route
+@app.route('/')
+def root():
+    """Welcome message"""
+    return jsonify({
+        'message': 'Welcome to Car Service Management System API',
+        'documentation': '/docs/',
+        'health': '/health',
+        'status': 'running'
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
