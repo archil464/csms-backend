@@ -24,7 +24,7 @@ app = Flask(__name__)
 CORS(app, resources={
     r"/*": {
         "origins": [
-            "http://localhost:4200",  # Angular dev server
+            "http://localhost:4200",  # cd Angular dev server
             "https://csms.ugt.ge",   # Production frontend
             "https://www.csms.ugt.ge" # Optional: with www prefix
         ],
