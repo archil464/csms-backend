@@ -1,24 +1,16 @@
 [build]
-# Use pip to install dependencies
-builder = "NIXPACKS"
-buildCommand = "pip install -r requirements.txt"
+builder = "nixpacks"
 
-[start]
-# Define how to start the server
-cmd = "python csms.py" # Or replace with your actual entry file name
+[build.environment]
+PYTHON_VERSION = "3.10"
 
 [deploy]
-# Set up automatic deployment on push to main
-numReplicas = 1
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 5
-healthcheckPath = "/health"
-healthcheckTimeout = 300
+startCommand = "gunicorn --bind 0.0.0.0:$PORT --workers 4 --timeout 120 app:app"
 
-[env]
-# DB and JWT values must be set in the Railway UI or .env file
+[environment]
+DATABASE_URL = { type = "postgresql" }
+JWT_SECRET_KEY = { generator = "secret" }
 PORT = "5000"
-FLASK_ENV = "production"
-PYTHONUNBUFFERED = "TRUE"
 
-# If your file isn't named app.py, replace this accordingly
+[variables]
+FLASK_ENV = "production"
