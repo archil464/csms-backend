@@ -26,7 +26,8 @@ CORS(app, resources={
         "origins": [
             "http://localhost:4200",  # cd Angular dev server
             "https://csms.ugt.ge",   # Production frontend
-            "https://www.csms.ugt.ge" # Optional: with www prefix
+            "https://www.csms.ugt.ge", # Optional: with www prefix
+            "https://csms-rho.vercel.app"
         ],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
