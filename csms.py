@@ -547,7 +547,7 @@ class Welcome(Resource):
 
 # --- Main entry point for running the Flask app ---
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 8000))
     if not app.config['SQLALCHEMY_DATABASE_URI']:
         logger.warning("SQLALCHEMY_DATABASE_URI not set! Running with default settings.")
     
